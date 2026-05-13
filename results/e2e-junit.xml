@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+  <testsuites tests="13" disabled="1" errors="0" failures="0" time="55.634547859">
+      <testsuite name="Inference Payload Processor" package="/e2e" tests="13" disabled="0" skipped="1" errors="0" failures="0" time="55.634547859" timestamp="2026-05-12T18:17:16">
+          <properties>
+              <property name="SuiteSucceeded" value="true"></property>
+              <property name="SuiteHasProgrammaticFocus" value="false"></property>
+              <property name="SpecialSuiteFailureReason" value=""></property>
+              <property name="SuiteLabels" value="[]"></property>
+              <property name="SuiteSemVerConstraints" value="[]"></property>
+              <property name="SuiteComponentSemVerConstraints" value="[]"></property>
+              <property name="RandomSeed" value="1778609836"></property>
+              <property name="RandomizeAllSpecs" value="false"></property>
+              <property name="LabelFilter" value=""></property>
+              <property name="SemVerFilter" value=""></property>
+              <property name="FocusStrings" value=""></property>
+              <property name="SkipStrings" value=""></property>
+              <property name="FocusFiles" value=""></property>
+              <property name="SkipFiles" value=""></property>
+              <property name="FailOnPending" value="false"></property>
+              <property name="FailOnEmpty" value="false"></property>
+              <property name="FailFast" value="false"></property>
+              <property name="FlakeAttempts" value="0"></property>
+              <property name="DryRun" value="false"></property>
+              <property name="ParallelTotal" value="1"></property>
+              <property name="OutputInterceptorMode" value=""></property>
+          </properties>
+          <testcase name="[BeforeSuite]" classname="Inference Payload Processor" status="passed" time="18.840486009">
+              <system-err>&gt; Enter [BeforeSuite] TOP-LEVEL - /src/test/e2e/e2e_suite_test.go:44 @ 05/12/26 18:17:16.512&#xA;STEP: Creating test namespace - /src/test/e2e/e2e_suite_test.go:67 @ 05/12/26 18:17:16.512&#xA;STEP: Creating simulator ServiceEntry and DestinationRule - /src/test/e2e/e2e_suite_test.go:70 @ 05/12/26 18:17:16.519&#xA;STEP: Creating curl client pod - /src/test/e2e/e2e_suite_test.go:102 @ 05/12/26 18:17:16.782&#xA;STEP: Creating provider resources - /src/test/e2e/e2e_suite_test.go:117 @ 05/12/26 18:17:20.85&#xA;STEP: Waiting for plugin reconcilers to sync - /src/test/e2e/e2e_suite_test.go:122 @ 05/12/26 18:17:25.35&#xA;&lt; Exit [BeforeSuite] TOP-LEVEL - /src/test/e2e/e2e_suite_test.go:44 @ 05/12/26 18:17:35.352 (18.84s)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return 200 for provider anthropic [e2e, tier1, smoke, sanity]" classname="Inference Payload Processor" status="passed" time="0.493128834">
+              <system-err>&gt; Enter [It] should return 200 for provider anthropic - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:35.353&#xA;&lt; Exit [It] should return 200 for provider anthropic - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:35.846 (493ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return 200 for provider azure-openai [e2e, tier1, smoke, sanity]" classname="Inference Payload Processor" status="passed" time="0.170802042">
+              <system-err>&gt; Enter [It] should return 200 for provider azure-openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:35.847&#xA;&lt; Exit [It] should return 200 for provider azure-openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.017 (171ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return 200 for provider bedrock-openai [e2e, tier1, smoke, sanity]" classname="Inference Payload Processor" status="passed" time="0.180986917">
+              <system-err>&gt; Enter [It] should return 200 for provider bedrock-openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.018&#xA;&lt; Exit [It] should return 200 for provider bedrock-openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.199 (181ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return 200 for provider openai [e2e, tier1, smoke, sanity]" classname="Inference Payload Processor" status="passed" time="0.148403833">
+              <system-err>&gt; Enter [It] should return 200 for provider openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.199&#xA;&lt; Exit [It] should return 200 for provider openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.347 (148ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return 200 for provider vertex-openai [e2e, tier1, smoke, sanity]" classname="Inference Payload Processor" status="passed" time="0.169439375">
+              <system-err>&gt; Enter [It] should return 200 for provider vertex-openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.347&#xA;&lt; Exit [It] should return 200 for provider vertex-openai - /src/test/e2e/e2e_test.go:160 @ 05/12/26 18:17:36.517 (169ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return OpenAI format response for provider anthropic [e2e, tier1]" classname="Inference Payload Processor" status="passed" time="0.14604675">
+              <system-err>&gt; Enter [It] should return OpenAI format response for provider anthropic - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:36.517&#xA;&lt; Exit [It] should return OpenAI format response for provider anthropic - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:36.663 (146ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return OpenAI format response for provider azure-openai [e2e, tier1]" classname="Inference Payload Processor" status="passed" time="0.210757875">
+              <system-err>&gt; Enter [It] should return OpenAI format response for provider azure-openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:36.663&#xA;&lt; Exit [It] should return OpenAI format response for provider azure-openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:36.874 (211ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return OpenAI format response for provider bedrock-openai [e2e, tier1]" classname="Inference Payload Processor" status="passed" time="0.178129583">
+              <system-err>&gt; Enter [It] should return OpenAI format response for provider bedrock-openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:36.874&#xA;&lt; Exit [It] should return OpenAI format response for provider bedrock-openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:37.052 (178ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return OpenAI format response for provider openai [e2e, tier1]" classname="Inference Payload Processor" status="passed" time="0.160126709">
+              <system-err>&gt; Enter [It] should return OpenAI format response for provider openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:37.052&#xA;&lt; Exit [It] should return OpenAI format response for provider openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:37.212 (160ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when IPP is deployed with all plugins should return OpenAI format response for provider vertex-openai [e2e, tier1]" classname="Inference Payload Processor" status="passed" time="0.555306959">
+              <system-err>&gt; Enter [It] should return OpenAI format response for provider vertex-openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:37.212&#xA;&lt; Exit [It] should return OpenAI format response for provider vertex-openai - /src/test/e2e/e2e_test.go:178 @ 05/12/26 18:17:37.767 (555ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[It] IPP Plugin Chain when simulator has key validation enabled should reject requests with an invalid API key [e2e, tier2]" classname="Inference Payload Processor" status="skipped" time="0.000624333">
+              <skipped message="skipped - E2E_SIMULATOR_VALIDATE_KEYS not set, skipping key validation test"></skipped>
+              <system-err>&gt; Enter [BeforeEach] when simulator has key validation enabled - /src/test/e2e/e2e_test.go:210 @ 05/12/26 18:17:37.768&#xA;[SKIPPED] E2E_SIMULATOR_VALIDATE_KEYS not set, skipping key validation test&#xA;In [BeforeEach] at: /src/test/e2e/e2e_test.go:212 @ 05/12/26 18:17:37.768&#xA;&lt; Exit [BeforeEach] when simulator has key validation enabled - /src/test/e2e/e2e_test.go:210 @ 05/12/26 18:17:37.768 (1ms)&#xA;</system-err>
+          </testcase>
+          <testcase name="[AfterSuite]" classname="Inference Payload Processor" status="passed" time="34.377879057">
+              <system-err>&gt; Enter [AfterSuite] TOP-LEVEL - /src/test/e2e/e2e_suite_test.go:62 @ 05/12/26 18:17:37.768&#xA;&lt; Exit [AfterSuite] TOP-LEVEL - /src/test/e2e/e2e_suite_test.go:62 @ 05/12/26 18:18:12.146 (34.378s)&#xA;</system-err>
+          </testcase>
+      </testsuite>
+  </testsuites>
