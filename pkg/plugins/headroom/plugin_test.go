@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,96 +31,58 @@ import (
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
 
-func compressRawHandler() http.HandlerFunc {
+func compressHandler(savedTokens int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req compressRawRequest
+		var req compressRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		var results []compressRawResultItem
-		for _, text := range req.Texts {
-			compressed := text[:len(text)/3] + "..." // simulate ~67% compression
-			results = append(results, compressRawResultItem{
-				Compressed:       compressed,
-				OriginalTokens:   len(text) / 4, // rough token estimate
-				CompressedTokens: len(text) / 12,
-			})
+		before := 1000
+		after := before - savedTokens
+		resp := compressResult{
+			Messages:         req.Messages[:1],
+			TokensBefore:     before,
+			TokensAfter:      after,
+			TokensSaved:      savedTokens,
+			CompressionRatio: float64(after) / float64(before),
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(compressRawResponse{Results: results})
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func noSavingsRawHandler() http.HandlerFunc {
+func noSavingsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req compressRawRequest
+		var req compressRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		var results []compressRawResultItem
-		for _, text := range req.Texts {
-			results = append(results, compressRawResultItem{
-				Compressed:       text,
-				OriginalTokens:   100,
-				CompressedTokens: 100,
-			})
+		resp := compressResult{
+			Messages:         req.Messages,
+			TokensBefore:     100,
+			TokensAfter:      100,
+			TokensSaved:      0,
+			CompressionRatio: 1.0,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(compressRawResponse{Results: results})
+		_ = json.NewEncoder(w).Encode(resp)
 	}
-}
-
-func newTestPlugin(t *testing.T, rawURL string) *HeadroomPlugin {
-	t.Helper()
-	p, err := NewHeadroomPlugin("http://unused:8787", rawURL, 10, true, nil, 2, 500)
-	require.NoError(t, err)
-	return p
-}
-
-func largeToolContent() string {
-	return strings.Repeat("log line with lots of data about requests and responses ", 50)
-}
-
-func buildAgentConversation(toolResultCount, recentTurns int) []any {
-	var messages []any
-	messages = append(messages, map[string]any{"role": "system", "content": "You are helpful."})
-
-	for i := 0; i < toolResultCount; i++ {
-		messages = append(messages,
-			map[string]any{"role": "user", "content": "do something"},
-			map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{
-				map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "tool", "arguments": "{}"}},
-			}},
-			map[string]any{"role": "tool", "tool_call_id": "c1", "content": largeToolContent()},
-			map[string]any{"role": "assistant", "content": "done"},
-		)
-	}
-
-	for i := 0; i < recentTurns; i++ {
-		messages = append(messages,
-			map[string]any{"role": "user", "content": "follow up"},
-			map[string]any{"role": "assistant", "content": "response"},
-		)
-	}
-
-	messages = append(messages, map[string]any{"role": "user", "content": "final question"})
-	return messages
 }
 
 // --- Construction ---
 
 func TestNewHeadroomPlugin(t *testing.T) {
-	_, err := NewHeadroomPlugin("http://localhost:8787", "", 10, true, nil, 2, 500)
+	_, err := NewHeadroomPlugin("http://localhost:8787", 10, true)
 	require.NoError(t, err)
 
-	_, err = NewHeadroomPlugin("", "", 10, true, nil, 2, 500)
+	_, err = NewHeadroomPlugin("", 10, true)
 	require.Error(t, err)
 }
 
 func TestHeadroomTypedName(t *testing.T) {
-	p, err := NewHeadroomPlugin("http://localhost:8787", "", 10, true, nil, 2, 500)
+	p, err := NewHeadroomPlugin("http://localhost:8787", 10, true)
 	require.NoError(t, err)
 	assert.Equal(t, HeadroomPluginType, p.TypedName().Type)
 
@@ -129,129 +90,100 @@ func TestHeadroomTypedName(t *testing.T) {
 	assert.Equal(t, "my-headroom", p.TypedName().Name)
 }
 
-// --- findCompressibleToolResults ---
-
-func TestFindCompressible_OldToolResultsFound(t *testing.T) {
-	p := newTestPlugin(t, "http://unused")
-	// 3 tool results, 2 recent turns → first tool result is old and compressible
-	messages := buildAgentConversation(3, 2)
-	candidates := p.findCompressibleToolResults(messages)
-	assert.GreaterOrEqual(t, len(candidates), 1, "should find at least 1 old tool result")
-}
-
-func TestFindCompressible_RecentToolResultsProtected(t *testing.T) {
-	p := newTestPlugin(t, "http://unused")
-	// 1 tool result, 0 recent turns → tool result is within last 2 turns, protected
-	messages := buildAgentConversation(1, 0)
-	candidates := p.findCompressibleToolResults(messages)
-	assert.Empty(t, candidates, "tool result in recent turns should be protected")
-}
-
-func TestFindCompressible_SmallToolResultsSkipped(t *testing.T) {
-	p := newTestPlugin(t, "http://unused")
-	messages := []any{
-		map[string]any{"role": "user", "content": "do something"},
-		map[string]any{"role": "tool", "tool_call_id": "c1", "content": "small"},
-		map[string]any{"role": "user", "content": "next"},
-		map[string]any{"role": "user", "content": "next"},
-		map[string]any{"role": "user", "content": "final"},
-	}
-	candidates := p.findCompressibleToolResults(messages)
-	assert.Empty(t, candidates, "small tool results should be skipped")
-}
-
-func TestFindCompressible_NonToolMessagesIgnored(t *testing.T) {
-	p := newTestPlugin(t, "http://unused")
-	messages := []any{
-		map[string]any{"role": "user", "content": largeToolContent()},
-		map[string]any{"role": "assistant", "content": largeToolContent()},
-		map[string]any{"role": "system", "content": largeToolContent()},
-		map[string]any{"role": "user", "content": "q1"},
-		map[string]any{"role": "user", "content": "q2"},
-		map[string]any{"role": "user", "content": "final"},
-	}
-	candidates := p.findCompressibleToolResults(messages)
-	assert.Empty(t, candidates, "non-tool messages should never be compressed")
-}
-
 // --- ProcessRequest ---
 
-func TestProcessRequest_CompressesOldToolResults(t *testing.T) {
-	srv := httptest.NewServer(compressRawHandler())
+func TestProcessRequest_CompressionSucceeds(t *testing.T) {
+	srv := httptest.NewServer(compressHandler(600))
 	defer srv.Close()
 
-	p := newTestPlugin(t, srv.URL)
-	messages := buildAgentConversation(3, 2)
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
+	require.NoError(t, err)
 
 	req := framework.NewInferenceRequest()
-	req.Body["model"] = "gpt-4o"
-	req.Body["messages"] = messages
+	req.Body["model"] = "claude-opus-4-8"
+	req.Body["messages"] = []any{
+		map[string]any{"role": "user", "content": "read file"},
+		map[string]any{"role": "assistant", "content": "reading..."},
+		map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "content": "large file content here"},
+		}},
+	}
 
 	cs := framework.NewCycleState()
-	err := p.ProcessRequest(context.Background(), cs, req)
+	err = p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
 	saved, err := framework.ReadCycleStateKey[int](cs, state.HeadroomTokensSavedKey)
 	require.NoError(t, err)
-	assert.Greater(t, saved, 0)
+	assert.Equal(t, 600, saved)
+}
+
+func TestProcessRequest_NoSavings(t *testing.T) {
+	srv := httptest.NewServer(noSavingsHandler())
+	defer srv.Close()
+
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
+	require.NoError(t, err)
+
+	req := framework.NewInferenceRequest()
+	req.Body["model"] = "claude-opus-4-8"
+	req.Body["messages"] = []any{
+		map[string]any{"role": "user", "content": "hello"},
+	}
+
+	cs := framework.NewCycleState()
+	err = p.ProcessRequest(context.Background(), cs, req)
+	require.NoError(t, err)
+
+	_, readErr := framework.ReadCycleStateKey[int](cs, state.HeadroomTokensSavedKey)
+	assert.Error(t, readErr, "no stats when no savings")
 }
 
 func TestProcessRequest_BypassHeader(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("sidecar should not be called when bypass is set")
+		t.Fatal("should not be called when bypass is set")
 	}))
 	defer srv.Close()
 
-	p := newTestPlugin(t, srv.URL)
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
+	require.NoError(t, err)
 
 	req := framework.NewInferenceRequest()
 	req.Headers[bypassHeader] = "true"
-	req.Body["messages"] = buildAgentConversation(3, 2)
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
 
-	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
+	err = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
 	assert.NoError(t, err)
 }
 
 func TestProcessRequest_NoMessages(t *testing.T) {
-	p := newTestPlugin(t, "http://unreachable:9999")
+	p, err := NewHeadroomPlugin("http://unreachable:9999", 10, true)
+	require.NoError(t, err)
 
 	req := framework.NewInferenceRequest()
-	req.Body["model"] = "gpt-4o"
+	req.Body["model"] = "test"
 
-	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
-	assert.NoError(t, err)
-}
-
-func TestProcessRequest_NoCompressibleContent(t *testing.T) {
-	p := newTestPlugin(t, "http://unreachable:9999")
-
-	req := framework.NewInferenceRequest()
-	req.Body["messages"] = []any{
-		map[string]any{"role": "user", "content": "hello"},
-		map[string]any{"role": "assistant", "content": "hi"},
-	}
-
-	err := p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
+	err = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
 	assert.NoError(t, err)
 }
 
 func TestProcessRequest_ServiceDown_FailOpen(t *testing.T) {
-	p, err := NewHeadroomPlugin("http://localhost:8787", "http://localhost:1", 1, true, nil, 2, 500)
+	p, err := NewHeadroomPlugin("http://localhost:1", 1, true)
 	require.NoError(t, err)
 
 	req := framework.NewInferenceRequest()
-	req.Body["messages"] = buildAgentConversation(3, 2)
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
 
 	err = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
-	assert.NoError(t, err, "fail-open should not return error")
+	assert.NoError(t, err)
 }
 
 func TestProcessRequest_ServiceDown_FailClosed(t *testing.T) {
-	p, err := NewHeadroomPlugin("http://localhost:8787", "http://localhost:1", 1, false, nil, 2, 500)
+	p, err := NewHeadroomPlugin("http://localhost:1", 1, false)
 	require.NoError(t, err)
 
 	req := framework.NewInferenceRequest()
-	req.Body["messages"] = buildAgentConversation(3, 2)
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
 
 	err = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
 	require.Error(t, err)
@@ -261,27 +193,64 @@ func TestProcessRequest_ServiceDown_FailClosed(t *testing.T) {
 	assert.Equal(t, errcommon.ServiceUnavailable, infErr.Code)
 }
 
-func TestProcessRequest_NoSavings(t *testing.T) {
-	srv := httptest.NewServer(noSavingsRawHandler())
+func TestProcessRequest_UsesModelFromCycleState(t *testing.T) {
+	var capturedModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req compressRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		capturedModel = req.Model
+		resp := compressResult{Messages: req.Messages, TokensSaved: 0}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
 	defer srv.Close()
 
-	p := newTestPlugin(t, srv.URL)
-
-	req := framework.NewInferenceRequest()
-	req.Body["messages"] = buildAgentConversation(3, 2)
-
-	cs := framework.NewCycleState()
-	err := p.ProcessRequest(context.Background(), cs, req)
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
 	require.NoError(t, err)
 
-	_, readErr := framework.ReadCycleStateKey[int](cs, state.HeadroomTokensSavedKey)
-	assert.Error(t, readErr, "no stats should be written when no savings")
+	req := framework.NewInferenceRequest()
+	req.Body["model"] = "client-model"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
+
+	cs := framework.NewCycleState()
+	cs.Write(state.ModelKey, "claude-opus-4-8")
+
+	_ = p.ProcessRequest(context.Background(), cs, req)
+	assert.Equal(t, "claude-opus-4-8", capturedModel)
+}
+
+func TestProcessRequest_SendsFullMessages(t *testing.T) {
+	var capturedMessages []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req compressRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		capturedMessages = req.Messages
+		resp := compressResult{Messages: req.Messages, TokensSaved: 0}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
+	require.NoError(t, err)
+
+	messages := []any{
+		map[string]any{"role": "system", "content": "you are helpful"},
+		map[string]any{"role": "user", "content": "read file"},
+		map[string]any{"role": "assistant", "content": "reading"},
+		map[string]any{"role": "user", "content": "summarize"},
+	}
+	req := framework.NewInferenceRequest()
+	req.Body["model"] = "test"
+	req.Body["messages"] = messages
+
+	_ = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
+	assert.Len(t, capturedMessages, 4, "all messages should be sent to headroom")
 }
 
 // --- ProcessResponse ---
 
 func TestProcessResponse_AddsHeaders(t *testing.T) {
-	p := newTestPlugin(t, "http://unused")
+	p, err := NewHeadroomPlugin("http://localhost:8787", 10, true)
+	require.NoError(t, err)
 
 	cs := framework.NewCycleState()
 	cs.Write(state.HeadroomTokensBeforeKey, 1000)
@@ -289,7 +258,7 @@ func TestProcessResponse_AddsHeaders(t *testing.T) {
 	cs.Write(state.HeadroomTokensSavedKey, 600)
 
 	resp := framework.NewInferenceResponse()
-	err := p.ProcessResponse(context.Background(), cs, resp)
+	err = p.ProcessResponse(context.Background(), cs, resp)
 	require.NoError(t, err)
 
 	assert.Equal(t, "600", resp.Headers[responseTokensSavedHeader])
@@ -297,10 +266,11 @@ func TestProcessResponse_AddsHeaders(t *testing.T) {
 }
 
 func TestProcessResponse_NoStatsSkipsHeaders(t *testing.T) {
-	p := newTestPlugin(t, "http://unused")
+	p, err := NewHeadroomPlugin("http://localhost:8787", 10, true)
+	require.NoError(t, err)
 
 	resp := framework.NewInferenceResponse()
-	err := p.ProcessResponse(context.Background(), framework.NewCycleState(), resp)
+	err = p.ProcessResponse(context.Background(), framework.NewCycleState(), resp)
 	require.NoError(t, err)
 
 	assert.Empty(t, resp.MutatedHeaders())
@@ -309,13 +279,12 @@ func TestProcessResponse_NoStatsSkipsHeaders(t *testing.T) {
 // --- Factory ---
 
 func TestHeadroomFactory(t *testing.T) {
-	srv := httptest.NewServer(compressRawHandler())
+	srv := httptest.NewServer(compressHandler(100))
 	defer srv.Close()
 
-	params := json.RawMessage(`{"headroomURL":"` + srv.URL + `","rawURL":"` + srv.URL + `","timeoutSeconds":5,"failOpen":false}`)
+	params := json.RawMessage(`{"headroomURL":"` + srv.URL + `","timeoutSeconds":5,"failOpen":false}`)
 	p, err := HeadroomFactory("my-headroom", params, nil)
 	require.NoError(t, err)
-	require.NotNil(t, p)
 	assert.Equal(t, "my-headroom", p.TypedName().Name)
 }
 
@@ -326,8 +295,6 @@ func TestHeadroomFactory_DefaultConfig(t *testing.T) {
 
 	hp := p.(*HeadroomPlugin)
 	assert.True(t, hp.failOpen)
-	assert.Equal(t, defaultProtectRecentTurns, hp.protectRecentTurns)
-	assert.Equal(t, defaultMinCompressChars, hp.minCompressChars)
 }
 
 func TestHeadroomFactory_MissingURL(t *testing.T) {
@@ -338,14 +305,4 @@ func TestHeadroomFactory_MissingURL(t *testing.T) {
 func TestHeadroomFactory_InvalidJSON(t *testing.T) {
 	_, err := HeadroomFactory("test", json.RawMessage(`{invalid`), nil)
 	require.Error(t, err)
-}
-
-func TestHeadroomFactory_CustomTurnsAndChars(t *testing.T) {
-	params := json.RawMessage(`{"headroomURL":"http://localhost:8787","protectRecentTurns":5,"minCompressChars":1000}`)
-	p, err := HeadroomFactory("test", params, nil)
-	require.NoError(t, err)
-
-	hp := p.(*HeadroomPlugin)
-	assert.Equal(t, 5, hp.protectRecentTurns)
-	assert.Equal(t, 1000, hp.minCompressChars)
 }

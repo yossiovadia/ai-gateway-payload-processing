@@ -28,38 +28,32 @@ import (
 )
 
 const (
-	compressRawPath      = "/v1/compress-raw"
-	defaultTimeoutSec    = 10
-	maxResponseBytes     = 10 << 20 // 10 MiB
+	compressPath     = "/v1/compress"
+	defaultTimeoutSec = 10
+	maxResponseBytes  = 10 << 20 // 10 MiB
 )
 
-type compressRawRequest struct {
-	Texts []string `json:"texts"`
+type compressRequest struct {
+	Messages []any  `json:"messages"`
+	Model    string `json:"model"`
 }
 
-type compressRawResultItem struct {
-	Compressed       string `json:"compressed"`
-	OriginalTokens   int    `json:"original_tokens"`
-	CompressedTokens int    `json:"compressed_tokens"`
-}
-
-type compressRawResponse struct {
-	Results []compressRawResultItem `json:"results"`
+type compressResult struct {
+	Messages         []any   `json:"messages"`
+	TokensBefore     int     `json:"tokens_before"`
+	TokensAfter      int     `json:"tokens_after"`
+	TokensSaved      int     `json:"tokens_saved"`
+	CompressionRatio float64 `json:"compression_ratio"`
 }
 
 type headroomClient struct {
-	headroomURL    string
-	rawURL         string
-	httpClient     *http.Client
-	config         map[string]any
+	headroomURL string
+	httpClient  *http.Client
 }
 
-func newHeadroomClient(headroomURL string, rawURL string, timeoutSeconds int, compressConfig map[string]any) (*headroomClient, error) {
+func newHeadroomClient(headroomURL string, timeoutSeconds int) (*headroomClient, error) {
 	if headroomURL == "" {
 		return nil, errors.New("headroomURL is required")
-	}
-	if rawURL == "" {
-		rawURL = headroomURL
 	}
 	timeout := time.Duration(timeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -68,48 +62,49 @@ func newHeadroomClient(headroomURL string, rawURL string, timeoutSeconds int, co
 
 	return &headroomClient{
 		headroomURL: headroomURL,
-		rawURL:      rawURL,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-		config: compressConfig,
 	}, nil
 }
 
-func (c *headroomClient) compressRaw(ctx context.Context, texts []string) ([]compressRawResultItem, error) {
-	reqBody := compressRawRequest{Texts: texts}
+func (c *headroomClient) compress(ctx context.Context, messages []any, model string) (*compressResult, error) {
+	reqBody := compressRequest{
+		Messages: messages,
+		Model:    model,
+	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("marshal compress-raw request: %w", err)
+		return nil, fmt.Errorf("marshal compress request: %w", err)
 	}
 
-	url := c.rawURL + compressRawPath
+	url := c.headroomURL + compressPath
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("create compress-raw request: %w", err)
+		return nil, fmt.Errorf("create compress request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("headroom compress-raw call failed: %w", err)
+		return nil, fmt.Errorf("headroom compress call failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("headroom compress-raw returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("headroom returned status %d", resp.StatusCode)
 	}
 
 	limited := io.LimitReader(resp.Body, maxResponseBytes)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, fmt.Errorf("read compress-raw response: %w", err)
+		return nil, fmt.Errorf("read headroom response: %w", err)
 	}
 
-	var result compressRawResponse
+	var result compressResult
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("decode compress-raw response: %w", err)
+		return nil, fmt.Errorf("decode headroom response: %w", err)
 	}
 
-	return result.Results, nil
+	return &result, nil
 }

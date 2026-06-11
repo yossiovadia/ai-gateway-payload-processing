@@ -17,7 +17,6 @@ limitations under the License.
 package state
 
 const (
-	// CycleState keys
 	ProviderKey       = "provider"
 	ModelKey          = "model"
 	CredsRefName      = "credential-ref-name"
@@ -25,14 +24,12 @@ const (
 	ModelConfigKey    = "model-config"
 	APIFormatKey      = "api-format"
 
-	// Metering CycleState keys
 	MeteringUsernameKey     = "metering-username"
 	MeteringGroupKey        = "metering-group"
 	MeteringSubscriptionKey = "metering-subscription"
 	MeteringModelKey        = "metering-model"
 	MeteringRequestTimeKey  = "metering-request-time"
 
-	// Headroom CycleState keys
 	HeadroomTokensBeforeKey = "headroom-tokens-before"
 	HeadroomTokensAfterKey  = "headroom-tokens-after"
 	HeadroomTokensSavedKey  = "headroom-tokens-saved"
