@@ -19,6 +19,7 @@ package plugins
 import (
 	api_translation "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation"
 	apikey_injection "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/apikey-injection"
+	external_metering "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/external-metering"
 	provider_resolver "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/model-provider-resolver"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/nemo"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
@@ -28,6 +29,7 @@ func RegisterPlugins() {
 	framework.Register(provider_resolver.ModelProviderResolverPluginType, provider_resolver.ModelProviderResolverFactory)
 	framework.Register(api_translation.APITranslationPluginType, api_translation.APITranslationFactory)
 	framework.Register(apikey_injection.APIKeyInjectionPluginType, apikey_injection.APIKeyInjectionFactory)
+	framework.Register(external_metering.ExternalMeteringPluginType, external_metering.ExternalMeteringFactory)
 	framework.Register(nemo.NemoRequestGuardPluginType, nemo.NemoRequestGuardFactory)
 	framework.Register(nemo.NemoResponseGuardPluginType, nemo.NemoResponseGuardFactory)
 }

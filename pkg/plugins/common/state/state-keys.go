@@ -24,4 +24,11 @@ const (
 	CredsRefNamespace = "credential-ref-namespace"
 	ModelConfigKey    = "model-config"
 	APIFormatKey      = "api-format"
+
+	// Metering CycleState keys
+	MeteringUsernameKey     = "metering-username"
+	MeteringGroupKey        = "metering-group"
+	MeteringSubscriptionKey = "metering-subscription"
+	MeteringModelKey        = "metering-model"
+	MeteringRequestTimeKey  = "metering-request-time"
 )
