@@ -28,7 +28,16 @@ def _get_router():
         with _router_lock:
             if _router is None:
                 from headroom.transforms.content_router import ContentRouter
-                _router = ContentRouter()
+                from headroom.transforms.kompress_compressor import KompressCompressor
+                router = ContentRouter()
+                # Pre-load Kompress so it's available for text compression
+                try:
+                    kc = KompressCompressor()
+                    kc.preload()
+                    router._kompress = kc
+                except Exception as e:
+                    print(f"Warning: Kompress not available: {e}")
+                _router = router
     return _router
 
 
@@ -51,10 +60,14 @@ async def compress_raw(request: Request):
             })
             continue
         result = router.compress(text)
+        # Use character-based token estimation (4 chars ≈ 1 token)
+        # ContentRouter's total_compressed_tokens is unreliable
+        orig_tokens = len(text) // 4
+        comp_tokens = len(result.compressed) // 4
         results.append({
             "compressed": result.compressed,
-            "original_tokens": result.total_original_tokens,
-            "compressed_tokens": result.total_compressed_tokens,
+            "original_tokens": orig_tokens,
+            "compressed_tokens": comp_tokens,
         })
 
     return JSONResponse({"results": results})
