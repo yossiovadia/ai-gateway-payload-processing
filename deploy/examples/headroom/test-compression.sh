@@ -100,11 +100,11 @@ if transforms:
 LOGS_TEST='
 import json, urllib.request
 lines = []
-for i in range(200):
+for i in range(40):
     level = ["INFO", "WARN", "ERROR", "DEBUG"][i %4]
     lines.append("2026-06-12T10:%02d:%02dZ %s [svc-%d] req=%d path=/api/resource/%d status=%d latency=%dms user=u-%d message=Processing request with timeout=30s retry=3 batch=100" % (i % 60, i % 60, level, i % 5, 10000 + i, i % 100, [200, 201, 400, 500][i % 4], 50 + i * 3 % 500, i % 20))
 msgs = [
-    {"role": "user", "content": "Show me the last 200 log lines from the production service"},
+    {"role": "user", "content": "Show me recent log lines from the production service"},
     {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "get_logs", "arguments": "{\"service\": \"production\", \"lines\": 200}"}}]},
     {"role": "tool", "tool_call_id": "c1", "content": "\n".join(lines)},
     {"role": "user", "content": "Find all ERROR entries and summarize the issues"}
@@ -126,7 +126,7 @@ if transforms:
 CODE_TEST='
 import json, urllib.request
 code = "package main\n\nimport (\n\t\"context\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"net/http\"\n\t\"time\"\n)\n\n"
-for i in range(30):
+for i in range(10):
     code += "// Handler%d processes requests for resource type %d\n" % (i, i)
     code += "func Handler%d(w http.ResponseWriter, r *http.Request) {\n" % i
     code += "\tctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)\n"

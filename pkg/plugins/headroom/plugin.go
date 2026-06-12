@@ -44,11 +44,19 @@ var (
 	_ framework.ResponseProcessor = &HeadroomPlugin{}
 )
 
+const (
+	defaultProtectRecentTurns = 2
+	defaultMinCompressChars   = 500
+)
+
 type headroomConfig struct {
-	HeadroomURL    string         `json:"headroomURL"`
-	TimeoutSeconds int            `json:"timeoutSeconds"`
-	FailOpen       *bool          `json:"failOpen"`
-	CompressConfig map[string]any `json:"compressConfig"`
+	HeadroomURL        string         `json:"headroomURL"`
+	RawURL             string         `json:"rawURL"`
+	TimeoutSeconds     int            `json:"timeoutSeconds"`
+	FailOpen           *bool          `json:"failOpen"`
+	CompressConfig     map[string]any `json:"compressConfig"`
+	ProtectRecentTurns *int           `json:"protectRecentTurns"`
+	MinCompressChars   *int           `json:"minCompressChars"`
 }
 
 func (c *headroomConfig) isFailOpen() bool {
@@ -56,9 +64,11 @@ func (c *headroomConfig) isFailOpen() bool {
 }
 
 type HeadroomPlugin struct {
-	typedName plugin.TypedName
-	client    *headroomClient
-	failOpen  bool
+	typedName          plugin.TypedName
+	client             *headroomClient
+	failOpen           bool
+	protectRecentTurns int
+	minCompressChars   int
 }
 
 func HeadroomFactory(name string, rawParameters json.RawMessage, _ framework.Handle) (framework.BBRPlugin, error) {
@@ -72,7 +82,16 @@ func HeadroomFactory(name string, rawParameters json.RawMessage, _ framework.Han
 		}
 	}
 
-	p, err := NewHeadroomPlugin(config.HeadroomURL, config.TimeoutSeconds, config.isFailOpen(), config.CompressConfig)
+	protectTurns := defaultProtectRecentTurns
+	if config.ProtectRecentTurns != nil {
+		protectTurns = *config.ProtectRecentTurns
+	}
+	minChars := defaultMinCompressChars
+	if config.MinCompressChars != nil {
+		minChars = *config.MinCompressChars
+	}
+
+	p, err := NewHeadroomPlugin(config.HeadroomURL, config.RawURL, config.TimeoutSeconds, config.isFailOpen(), config.CompressConfig, protectTurns, minChars)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create '%s' plugin - %w", HeadroomPluginType, err)
 	}
@@ -80,15 +99,17 @@ func HeadroomFactory(name string, rawParameters json.RawMessage, _ framework.Han
 	return p.WithName(name), nil
 }
 
-func NewHeadroomPlugin(headroomURL string, timeoutSeconds int, failOpen bool, compressConfig map[string]any) (*HeadroomPlugin, error) {
-	client, err := newHeadroomClient(headroomURL, timeoutSeconds, compressConfig)
+func NewHeadroomPlugin(headroomURL, rawURL string, timeoutSeconds int, failOpen bool, compressConfig map[string]any, protectRecentTurns, minCompressChars int) (*HeadroomPlugin, error) {
+	client, err := newHeadroomClient(headroomURL, rawURL, timeoutSeconds, compressConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &HeadroomPlugin{
-		typedName: plugin.TypedName{Type: HeadroomPluginType, Name: HeadroomPluginType},
-		client:    client,
-		failOpen:  failOpen,
+		typedName:          plugin.TypedName{Type: HeadroomPluginType, Name: HeadroomPluginType},
+		client:             client,
+		failOpen:           failOpen,
+		protectRecentTurns: protectRecentTurns,
+		minCompressChars:   minCompressChars,
 	}, nil
 }
 
@@ -118,9 +139,21 @@ func (p *HeadroomPlugin) ProcessRequest(ctx context.Context, cycleState *framewo
 		return nil
 	}
 
-	model := p.resolveModel(cycleState, request)
+	// Find compressible tool results: old (beyond protectRecentTurns) and large enough
+	candidates := p.findCompressibleToolResults(messages)
+	if len(candidates) == 0 {
+		logger.Info("headroom: no compressible tool results found")
+		return nil
+	}
 
-	result, err := p.client.compress(ctx, messages, model)
+	// Extract text content from candidates
+	texts := make([]string, len(candidates))
+	for i, c := range candidates {
+		texts[i] = c.content
+	}
+
+	// Send to sidecar for raw compression
+	results, err := p.client.compressRaw(ctx, texts)
 	if err != nil {
 		if p.failOpen {
 			logger.Error(err, "headroom compression failed, passing through uncompressed (fail-open)")
@@ -129,25 +162,96 @@ func (p *HeadroomPlugin) ProcessRequest(ctx context.Context, cycleState *framewo
 		return errcommon.Error{Code: errcommon.ServiceUnavailable, Msg: fmt.Sprintf("headroom compression failed: %v", err)}
 	}
 
-	if result.TokensSaved <= 0 {
-		logger.Info("headroom: no compression savings, using original messages")
+	// Replace tool content with compressed versions
+	totalBefore, totalAfter := 0, 0
+	for i, result := range results {
+		if i >= len(candidates) {
+			break
+		}
+		if result.CompressedTokens >= result.OriginalTokens {
+			continue
+		}
+		candidates[i].setContent(messages, result.Compressed)
+		totalBefore += result.OriginalTokens
+		totalAfter += result.CompressedTokens
+	}
+
+	totalSaved := totalBefore - totalAfter
+	if totalSaved <= 0 {
+		logger.Info("headroom: no compression savings after processing")
 		return nil
 	}
 
-	request.SetBodyField("messages", result.Messages)
+	request.SetBodyField("messages", messages)
 
-	cycleState.Write(state.HeadroomTokensBeforeKey, result.TokensBefore)
-	cycleState.Write(state.HeadroomTokensAfterKey, result.TokensAfter)
-	cycleState.Write(state.HeadroomTokensSavedKey, result.TokensSaved)
+	cycleState.Write(state.HeadroomTokensBeforeKey, totalBefore)
+	cycleState.Write(state.HeadroomTokensAfterKey, totalAfter)
+	cycleState.Write(state.HeadroomTokensSavedKey, totalSaved)
 
 	logger.Info("headroom compression applied",
-		"tokensBefore", result.TokensBefore,
-		"tokensAfter", result.TokensAfter,
-		"tokensSaved", result.TokensSaved,
-		"compressionRatio", result.CompressionRatio,
+		"toolResults", len(candidates),
+		"tokensBefore", totalBefore,
+		"tokensAfter", totalAfter,
+		"tokensSaved", totalSaved,
 	)
 
 	return nil
+}
+
+type toolResultCandidate struct {
+	msgIndex int
+	content  string
+}
+
+func (c *toolResultCandidate) setContent(messages []any, compressed string) {
+	msg, ok := messages[c.msgIndex].(map[string]any)
+	if !ok {
+		return
+	}
+	msg["content"] = compressed
+}
+
+func (p *HeadroomPlugin) findCompressibleToolResults(messages []any) []toolResultCandidate {
+	// Count turns from the end (a turn = a user message)
+	turnCount := 0
+	protectionBoundary := len(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role == "user" {
+			turnCount++
+			if turnCount >= p.protectRecentTurns {
+				protectionBoundary = i
+				break
+			}
+		}
+	}
+
+	// Find tool messages before the protection boundary
+	var candidates []toolResultCandidate
+	for i := 0; i < protectionBoundary; i++ {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role != "tool" {
+			continue
+		}
+		content, ok := msg["content"].(string)
+		if !ok || len(content) < p.minCompressChars {
+			continue
+		}
+		candidates = append(candidates, toolResultCandidate{
+			msgIndex: i,
+			content:  content,
+		})
+	}
+
+	return candidates
 }
 
 func (p *HeadroomPlugin) ProcessResponse(ctx context.Context, cycleState *framework.CycleState, response *framework.InferenceResponse) error {
@@ -172,12 +276,3 @@ func (p *HeadroomPlugin) ProcessResponse(ctx context.Context, cycleState *framew
 	return nil
 }
 
-func (p *HeadroomPlugin) resolveModel(cycleState *framework.CycleState, request *framework.InferenceRequest) string {
-	if model, err := framework.ReadCycleStateKey[string](cycleState, state.ModelKey); err == nil && model != "" {
-		return model
-	}
-	if model, ok := request.Body["model"].(string); ok {
-		return model
-	}
-	return ""
-}
