@@ -204,9 +204,10 @@ This gives us session-like behavior without actual session state.
   for external providers. Compression stats are in BBR logs and CycleState only,
   not response headers.
 
-- **Kompress latency**: ~3s per compression call on 4 CPU cores (ONNX inference).
-  Acceptable for LLM requests (2-30s) but adds overhead. JSON compression
-  (smart_crusher) is instant.
+- **Kompress latency**: ~3s per compression call on 4 CPU cores (ONNX inference,
+  CPU-only build). All testing was done on CPU. With `onnxruntime-gpu` on a GPU
+  node, inference would be <100ms — the Kompress model is ~261MB, trivial for
+  modern GPUs. JSON compression (smart_crusher) is instant on CPU, no ML needed.
 
 - **First-call cold start**: The Kompress model loads lazily on first `/v1/compress-raw`
   call (~1-4s). Subsequent calls are at inference speed. Consider a startup probe
