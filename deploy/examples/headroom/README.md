@@ -1,24 +1,78 @@
 # Headroom Context Compression Plugin
 
-Headroom compresses LLM context (tool outputs, RAG chunks, conversation history)
-before requests reach the provider. Same answers, fewer tokens.
+Compresses old tool outputs (file reads, logs, API responses) in the BBR pipeline
+before requests reach the LLM provider. Reduces token costs with zero quality loss.
 
 Upstream: https://github.com/chopratejas/headroom (28k+ stars)
 
-## How It Works
+## Architecture (v2 — Selective Tool Output Compression)
 
-The headroom plugin sits in the BBR pipeline after model-provider-resolver and before
-api-translation. On each request:
+The Go plugin handles selection logic (what to compress vs protect). The sidecar
+is a raw compression service — it compresses whatever it receives, no protection logic.
 
-1. Extracts the `messages` array from the request body
-2. Sends them to the headroom sidecar (`POST /v1/compress`) for compression
-3. Replaces the messages with the compressed version
-4. Writes compression stats to CycleState (for metering integration)
+```
+                     REQUEST FLOW
 
-## Sidecar Image
+Client                   BBR Plugin Chain                           Provider
+  │                          │                                         │
+  │  messages: [             │                                         │
+  │    user: "read file"     │                                         │
+  │    tool_result: 50K   ──►│  headroom plugin:                       │
+  │    assistant: "found..." │  1. Walk messages                       │
+  │    user: "fix the bug"   │  2. Find tool_result older than N turns │
+  │    tool_result: 30K   ──►│  3. Send to sidecar /v1/compress-raw    │
+  │    assistant: "fixing.." │  4. Replace with compressed content     │
+  │    user: "run tests"     │                                         │
+  │  ]                       │         ┌─────────────┐                 │
+  │                          │         │  Sidecar     │                 │
+  │  120K input tokens       │────────►│  :8788       │                 │
+  │                          │         │  compress-raw│                 │
+  │                          │◄────────│  (Kompress)  │                 │
+  │                          │         └─────────────┘                 │
+  │                          │                                         │
+  │                          │  Compressed: 120K → 45K tokens ────────►│
+```
 
-The headroom sidecar runs the headroom proxy server. Key requirements learned from
-deploying on OpenShift:
+### What Gets Compressed vs Protected
+
+| Message Type | Compress? | Why |
+|---|---|---|
+| `tool` result (old, > N turns) | **YES** | File reads, logs, diffs — bulk of tokens |
+| `tool` result (last 2 turns) | No | Model might reference recent tool output |
+| `assistant` (text) | No | Model's reasoning, must preserve |
+| `user` (text) | No | User intent, must preserve |
+| `system` prompt | No | Instructions, must preserve |
+
+## Proven Results
+
+### E2E Through Gateway (real Claude responses)
+
+| Test | Input Tokens | Compressed | Saved | Quality |
+|------|-------------|-----------|-------|---------|
+| Agent debugging conversation | 273 | 129 | **53%** | Correct answer, no degradation |
+| Search/RAG (50 documents) | 3,781 | 1,706 | **55%** | Same top-5 docs, same scores |
+
+### Direct Compression Tests (no LLM cost)
+
+| Content Type | Tokens Before | After | Saved |
+|---|---|---|---|
+| Search/RAG (50 docs) | 6,216 | 2,391 | **61.5%** |
+| K8s API (30 pods JSON) | 4,991 | 1,483 | **70.3%** |
+| Log lines (50 lines, Kompress ML) | 700 | 246 | **65%** |
+| Plain conversation (no tools) | 53 | 53 | 0% (by design) |
+
+### Cost Impact
+
+At Claude Opus pricing ($15/M input tokens):
+- Per request with tool outputs: ~$0.03 saved
+- Per 1M requests: ~$31,000 saved
+
+## Two-Service Sidecar
+
+The sidecar runs two servers:
+- **Port 8787**: Standard headroom proxy (healthz, stats)
+- **Port 8788**: Raw compression service (`/v1/compress-raw`) — calls
+  `ContentRouter.compress()` directly with Kompress ML model pre-loaded
 
 ### Dockerfile
 
@@ -27,198 +81,142 @@ FROM python:3.11-slim
 
 RUN pip install --no-cache-dir "headroom-ai[proxy]==0.25.0" onnxruntime
 
-# Pre-download the Kompress ONNX model — baked into the image, no runtime downloads.
-# headroom-ai[proxy] does NOT include onnxruntime — must be installed separately.
-# The Kompress ML compressor needs the ONNX model files from HuggingFace.
+# Writable dirs for OpenShift random UID
 ENV HF_HOME=/opt/huggingface
-RUN mkdir -p /opt/huggingface /opt/app /opt/headroom-data && \
-    chmod -R 777 /opt/huggingface /opt/app /opt/headroom-data && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download('chopratejas/kompress-v2-base')" && \
-    chmod -R 755 /opt/huggingface
-
-# Writable home dir for OpenShift (runs as random UID, not root)
 ENV HOME=/opt/app
 ENV HEADROOM_DATA_DIR=/opt/headroom-data
+RUN mkdir -p /opt/huggingface /opt/app /opt/headroom-data
 
-EXPOSE 8787
-ENTRYPOINT ["headroom", "proxy", "--port", "8787", "--host", "0.0.0.0"]
+# Pre-download Kompress ONNX model + ModernBERT tokenizer (no runtime downloads)
+RUN python -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download('chopratejas/kompress-v2-base'); \
+snapshot_download('answerdotai/ModernBERT-base')"
+
+RUN chmod -R 777 /opt/huggingface /opt/app /opt/headroom-data
+
+COPY compress-raw-server.py /opt/app/compress-raw-server.py
+
+EXPOSE 8787 8788
+ENTRYPOINT ["python3", "/opt/app/compress-raw-server.py"]
 ```
 
-### Key Lessons
+### Key Deployment Lessons
 
-1. **`onnxruntime` must be installed separately** — `headroom-ai[proxy]` does NOT include it.
-   Without onnxruntime, the Kompress ML compressor silently falls back to no compression.
+1. **`onnxruntime` must be installed separately** — `headroom-ai[proxy]` does NOT
+   include it. Without onnxruntime, Kompress silently falls back to no compression.
 
-2. **Pre-download the Kompress model at build time** — The model is at
-   `chopratejas/kompress-v2-base` on HuggingFace (~600MB fp32, ~274MB int8).
-   Runtime downloads may fail due to network restrictions in the cluster.
+2. **Pre-download BOTH models at build time**:
+   - `chopratejas/kompress-v2-base` — Kompress ONNX model (~274MB int8)
+   - `answerdotai/ModernBERT-base` — tokenizer used by Kompress
+   
+   Runtime downloads fail due to network restrictions in the cluster.
 
 3. **OpenShift runs containers as a random UID** (e.g., `1000710000`), NOT root.
    - `/root/.cache/` is NOT writable → set `HF_HOME=/opt/huggingface`
-   - `HOME` must be a writable directory → set `HOME=/opt/app`
+   - `HOME` must be writable → set `HOME=/opt/app`
    - All data directories need `chmod 777` during build
 
-4. **Memory requirements** — The ONNX model loading needs at least 1Gi.
-   Set sidecar resource limits to at least 4Gi for production use
-   (the model is ~600MB + onnxruntime overhead + headroom buffers).
+4. **CPU requirements** — Kompress ML inference needs real CPU.
+   - 500m (half core): too slow, timeouts
+   - 4 cores: ~3s per compression call — acceptable for LLM requests (2-30s)
+   - JSON compression (smart_crusher): instant, no ML needed
 
-5. **Startup time** — First request takes 4-6 seconds (model loading). Subsequent
-   requests take ~50-250ms for compression. Set readiness probe with
-   `initialDelaySeconds: 15`.
+5. **Memory** — at least 4Gi for the ONNX model + inference buffers.
 
-6. **Readiness probe path** — headroom uses `/readyz` (not `/healthz`).
+6. **Readiness probe** — use port 8788 path `/readyz` (the compress-raw server).
 
-## Deployment on OpenShift
-
-See the [sandbox deploy runbook](../../docs/sandbox-deploy-runbook.md) for the full
-list of cluster patches needed after deploying a new image.
-
-### Plugin Chain
+## Plugin Configuration
 
 ```yaml
-plugins:
-  - type: body-field-to-header
-    name: model-extractor
-    json:
-      fieldName: model
-      headerName: X-Gateway-Model-Name
-  - type: external-metering
-    name: metering-check
-    json:
-      meteringURL: "http://metering-service.openshift-ingress.svc:8080"
-      timeoutSeconds: 5
-      featureKey: "inference-tokens"
-      source: "maas-gateway"
-      failOpen: true
-  - type: headroom
-    name: headroom
-    json:
-      headroomURL: "http://localhost:8787"
-      timeoutSeconds: 10
-      failOpen: true
-  - type: model-provider-resolver
-    name: model-provider-resolver
-  - type: api-translation
-    name: api-translation
-  - type: apikey-injection
-    name: apikey-injection
+- type: headroom
+  name: headroom
+  json:
+    headroomURL: "http://localhost:8787"
+    rawURL: "http://localhost:8788"
+    timeoutSeconds: 10
+    failOpen: true
+    protectRecentTurns: 2
+    minCompressChars: 500
 ```
-
-### Sidecar Container Spec
-
-```yaml
-- name: headroom
-  image: image-registry.openshift-image-registry.svc:5000/openshift-ingress/headroom-sidecar:latest
-  ports:
-    - containerPort: 8787
-      name: headroom
-      protocol: TCP
-  resources:
-    requests:
-      cpu: 100m
-      memory: 1Gi
-    limits:
-      cpu: "1"
-      memory: 4Gi
-  readinessProbe:
-    httpGet:
-      path: /readyz
-      port: 8787
-    initialDelaySeconds: 15
-    periodSeconds: 10
-```
-
-### Building the Sidecar Image on OpenShift
-
-```bash
-# Create BuildConfig (first time only)
-oc new-build --binary --strategy=docker --name=headroom-sidecar -n openshift-ingress
-
-# Build (creates Dockerfile in temp dir, builds on cluster)
-TMPDIR=$(mktemp -d)
-# ... write Dockerfile (see above) ...
-oc start-build headroom-sidecar -n openshift-ingress --from-dir="$TMPDIR" --follow
-```
-
-## Configuration
-
-Plugin config (in Helm values under `plugins`):
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `headroomURL` | (required) | URL of the headroom service (e.g., `http://localhost:8787`) |
-| `timeoutSeconds` | `10` | HTTP timeout for compress calls |
-| `failOpen` | `true` | Pass through uncompressed if headroom is down |
-| `compressConfig` | `null` | Forwarded to headroom's compress endpoint (target_ratio, protect_recent, etc.) |
+| `headroomURL` | (required) | Headroom proxy URL |
+| `rawURL` | same as headroomURL | Raw compression service URL (compress-raw-server) |
+| `timeoutSeconds` | `10` | HTTP timeout for compression calls |
+| `failOpen` | `true` | Pass through uncompressed if sidecar is down |
+| `protectRecentTurns` | `2` | Number of recent turns to protect from compression |
+| `minCompressChars` | `500` | Minimum tool output size (chars) to attempt compression |
 
 ## A/B Evaluation
 
-To compare responses with and without compression, use the `X-Headroom-Bypass: true` header:
+Compare responses with and without compression using the `X-Headroom-Bypass: true` header:
 
 ```bash
 # With compression
 curl -X POST "$GATEWAY/v1/chat/completions" \
-  -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
-  -d '{"model":"claude-opus-4-6","max_tokens":200,"messages":[...]}'
+  -d '{"model":"claude-opus-4-6","messages":[...]}'
 
 # Without compression (bypass)
 curl -X POST "$GATEWAY/v1/chat/completions" \
-  -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
   -H "X-Headroom-Bypass: true" \
-  -d '{"model":"claude-opus-4-6","max_tokens":200,"messages":[...]}'
+  -d '{"model":"claude-opus-4-6","messages":[...]}'
 ```
 
-See `eval-headroom.sh` for an automated A/B evaluation script.
+See `eval-headroom.sh` for automated A/B evaluation.
+See `test-compression.sh` for direct compression testing (no LLM cost).
 
-## When Does Compression Actually Happen?
+## Why Only Tool Outputs?
 
-Headroom compresses **tool/function call outputs** — NOT user, system, or assistant
-messages. This is by design: user messages are never modified, system prompts are
-preserved, and assistant messages are protected for cache safety.
+Typical Claude Code session token breakdown:
 
-**What gets compressed:**
-- `role: "tool"` messages with large JSON arrays, search results, API responses
-- RAG document chunks returned via tool calls
-- Log dumps, file contents, and verbose tool output
+```
+System prompt:        ~5K    (3%)     ← small, don't touch
+User messages:        ~3K    (2%)     ← small, don't touch
+Assistant reasoning:  ~15K   (10%)    ← important, don't touch
+Tool results:         ~120K  (80%)    ← FILE READS, LOGS, DIFFS
+Other:                ~7K    (5%)     ← metadata
+```
 
-**What does NOT get compressed (protected by default):**
-- `role: "user"` messages (always protected)
-- `role: "system"` messages (always protected)
-- `role: "assistant"` messages (protected for cache safety)
+Tool results are 80% of tokens. Compressing them at 53-70% saves ~60-84K tokens
+per request. Compressing user/assistant messages would save 2-10% of tokens and
+risk quality degradation.
 
-**Real compression results from our testing:**
+## Why /v1/compress-raw Instead of /v1/compress?
 
-| Scenario | Tokens Before | Tokens After | Saved | % |
-|----------|--------------|-------------|-------|---|
-| 50-item tool output | 2,798 | 2,499 | 299 | 10.7% |
-| 100-item tool output | 4,247 | 3,648 | 599 | 14.1% |
-| Short conversation (no tools) | 557 | 557 | 0 | 0% |
+Headroom's standard `/v1/compress` endpoint is designed for **proxy mode** with
+session tracking. It protects all "recent" messages from compression. In the gateway
+flow (stateless, no session), every request is treated as "turn 1" — everything is
+"recent" — so nothing gets compressed.
 
-**Bottom line:** Headroom shines for agent workflows where tool calls return large
-data (search results, API responses, file contents). For simple chat conversations
-without tool use, compression won't trigger. This is the intended design — headroom
-is a "tool output compressor," not a "conversation compressor."
+The v2 architecture solves this by moving selection logic into the Go plugin:
+- **Go plugin** decides WHAT to compress (old tool results only)
+- **Sidecar** `/v1/compress-raw` compresses WHATEVER it receives (no protection)
+
+This gives us session-like behavior without actual session state.
 
 ## Known Issues
 
-- **ext-proc response processing disabled**: The EnvoyFilter must set
-  `response_body_mode: NONE` for external providers (Anthropic, OpenAI).
-  This means the headroom ResponseProcessor (which adds `X-Headroom-Tokens-Saved`
-  response headers) doesn't run. Compression stats are available in BBR logs and
-  CycleState only.
+- **ext-proc response headers disabled**: The EnvoyFilter sets `response_body_mode: NONE`
+  for external providers. Compression stats are in BBR logs and CycleState only,
+  not response headers.
 
-- **Kuadrant operator may revert EnvoyFilter**: Re-apply the EnvoyFilter patch
-  (response_body_mode: NONE) if requests start failing.
+- **Kompress latency**: ~3s per compression call on 4 CPU cores (ONNX inference).
+  Acceptable for LLM requests (2-30s) but adds overhead. JSON compression
+  (smart_crusher) is instant.
 
-- **`[transformers] PyTorch was not found`**: This warning is benign. The proxy
-  uses onnxruntime for inference, not PyTorch. Install `headroom-ai[ml]` only if
-  you need PyTorch-based models.
+- **First-call cold start**: The Kompress model loads lazily on first `/v1/compress-raw`
+  call (~1-4s). Subsequent calls are at inference speed. Consider a startup probe
+  or warmup request.
+
+- **`[transformers] PyTorch was not found`**: Benign warning. The proxy uses
+  onnxruntime, not PyTorch.
 
 ## Verifying Savings
 
-1. **BBR pod logs**: `headroom compression applied tokensBefore=X tokensAfter=Y tokensSaved=Z`
-   (or `headroom: no compression savings` for small contexts)
-2. **Headroom sidecar logs**: `Transform content_router: X -> Y tokens (saved Z)`
-3. **Metering service**: Compare token counts with and without headroom enabled
+1. **BBR pod logs**: `headroom compression applied toolResults=N tokensBefore=X tokensAfter=Y tokensSaved=Z`
+2. **Metering dashboard**: Compare token counts with and without headroom
+3. **Test scripts**: `test-compression.sh` (direct, no cost) and `eval-headroom.sh` (A/B via Claude)
