@@ -174,17 +174,32 @@ See `eval-headroom.sh` for an automated A/B evaluation script.
 
 ## When Does Compression Actually Happen?
 
-Headroom's Kompress ML compressor is designed for **large contexts** — it compresses
-tool outputs, RAG document chunks, log data, and long conversation histories. Short
-prompts (<500 tokens) typically show "no compression savings" because there's nothing
-worth compressing.
+Headroom compresses **tool/function call outputs** — NOT user, system, or assistant
+messages. This is by design: user messages are never modified, system prompts are
+preserved, and assistant messages are protected for cache safety.
 
-To see actual compression, send requests with:
-- Long system prompts with detailed instructions
-- Multi-turn conversations with 10+ messages
-- Tool/function call results with verbose output
-- RAG context with multiple document chunks
-- Large code blocks or log dumps
+**What gets compressed:**
+- `role: "tool"` messages with large JSON arrays, search results, API responses
+- RAG document chunks returned via tool calls
+- Log dumps, file contents, and verbose tool output
+
+**What does NOT get compressed (protected by default):**
+- `role: "user"` messages (always protected)
+- `role: "system"` messages (always protected)
+- `role: "assistant"` messages (protected for cache safety)
+
+**Real compression results from our testing:**
+
+| Scenario | Tokens Before | Tokens After | Saved | % |
+|----------|--------------|-------------|-------|---|
+| 50-item tool output | 2,798 | 2,499 | 299 | 10.7% |
+| 100-item tool output | 4,247 | 3,648 | 599 | 14.1% |
+| Short conversation (no tools) | 557 | 557 | 0 | 0% |
+
+**Bottom line:** Headroom shines for agent workflows where tool calls return large
+data (search results, API responses, file contents). For simple chat conversations
+without tool use, compression won't trigger. This is the intended design — headroom
+is a "tool output compressor," not a "conversation compressor."
 
 ## Known Issues
 
