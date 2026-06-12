@@ -31,4 +31,9 @@ const (
 	MeteringSubscriptionKey = "metering-subscription"
 	MeteringModelKey        = "metering-model"
 	MeteringRequestTimeKey  = "metering-request-time"
+
+	// Headroom CycleState keys
+	HeadroomTokensBeforeKey = "headroom-tokens-before"
+	HeadroomTokensAfterKey  = "headroom-tokens-after"
+	HeadroomTokensSavedKey  = "headroom-tokens-saved"
 )

@@ -106,6 +106,7 @@ func (t *AnthropicTranslator) TranslateRequest(body map[string]any) (map[string]
 		"anthropic-version": anthropicAPIVersion,
 		"content-type":      "application/json",
 		":path":             anthropicPath,
+		":authority":        "api.anthropic.com",
 	}
 
 	return translated, headers, nil, nil

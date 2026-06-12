@@ -1,0 +1,85 @@
+# Helm values for deploying payload-processing with headroom context compression.
+#
+# Headroom compresses LLM context (tool outputs, RAG chunks, conversation history)
+# before requests reach the provider. Same answers, fewer tokens.
+#
+# Prerequisites:
+#   - Headroom sidecar image: ghcr.io/chopratejas/headroom
+#   - The sidecar exposes POST /v1/compress on port 8787
+#
+# Usage:
+#   helm install payload-processing ./deploy/payload-processing -f deploy/examples/headroom/values-with-headroom.yaml
+
+upstreamBbr:
+  bbr:
+    name: payload-processing
+    replicas: 1
+    image:
+      registry: quay.io/opendatahub
+      repository: odh-ai-gateway-payload-processing
+      tag: odh-stable
+      pullPolicy: IfNotPresent
+    port: 9004
+    healthCheckPort: 9005
+    multiNamespace: true
+
+    flags:
+      v: 3
+
+    # Headroom sidecar container — runs alongside BBR in the same pod.
+    extraContainers:
+      - name: headroom
+        image: ghcr.io/chopratejas/headroom:latest
+        command: ["headroom", "proxy", "--port", "8787"]
+        ports:
+          - containerPort: 8787
+            name: headroom
+            protocol: TCP
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8787
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+    plugins:
+      - type: body-field-to-header
+        name: model-extractor
+        json:
+          fieldName: model
+          headerName: X-Gateway-Model-Name
+      - type: model-provider-resolver
+        name: model-provider-resolver
+      # Headroom: compress messages before translation/forwarding.
+      # Set failOpen=true so requests pass through if the sidecar is down.
+      - type: headroom
+        name: headroom
+        json:
+          headroomURL: "http://localhost:8787"
+          timeoutSeconds: 10
+          failOpen: true
+          # Optional: pass compression config to headroom.
+          # compressConfig:
+          #   target_ratio: 0.5
+          #   protect_recent: 4
+          #   compress_user_messages: false
+      - type: api-translation
+        name: api-translation
+      - type: apikey-injection
+        name: apikey-injection
+
+  provider:
+    name: istio
+    istio:
+      envoyFilter:
+        operation: INSERT_AFTER
+
+  inferenceGateway:
+    name: maas-default-gateway

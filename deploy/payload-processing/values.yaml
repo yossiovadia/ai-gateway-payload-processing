@@ -25,6 +25,12 @@ upstreamBbr:
           headerName: X-Gateway-Model-Name
       - type: model-provider-resolver
         name: model-provider-resolver
+      - type: headroom
+        name: headroom
+        json:
+          headroomURL: "http://localhost:8787"
+          timeoutSeconds: 10
+          failOpen: true
       - type: api-translation
         name: api-translation
       - type: apikey-injection
