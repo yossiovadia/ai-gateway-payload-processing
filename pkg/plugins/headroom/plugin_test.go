@@ -139,23 +139,6 @@ func TestProcessRequest_NoSavings(t *testing.T) {
 	assert.Error(t, readErr, "no stats when no savings")
 }
 
-func TestProcessRequest_BypassHeader(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("should not be called when bypass is set")
-	}))
-	defer srv.Close()
-
-	p, err := NewHeadroomPlugin(srv.URL, 10, true)
-	require.NoError(t, err)
-
-	req := framework.NewInferenceRequest()
-	req.Headers[bypassHeader] = "true"
-	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
-
-	err = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
-	assert.NoError(t, err)
-}
-
 func TestProcessRequest_NoMessages(t *testing.T) {
 	p, err := NewHeadroomPlugin("http://unreachable:9999", 10, true)
 	require.NoError(t, err)

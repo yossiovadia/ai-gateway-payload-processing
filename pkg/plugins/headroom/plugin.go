@@ -34,7 +34,6 @@ import (
 const (
 	HeadroomPluginType = "headroom"
 
-	bypassHeader              = "x-headroom-bypass"
 	responseTokensSavedHeader = "x-headroom-tokens-saved"
 	responseRatioHeader       = "x-headroom-compression-ratio"
 )
@@ -102,11 +101,6 @@ func (p *HeadroomPlugin) WithName(name string) *HeadroomPlugin {
 
 func (p *HeadroomPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
 	logger := log.FromContext(ctx).V(logutil.DEFAULT)
-
-	if request.Headers[bypassHeader] == "true" {
-		logger.Info("headroom bypass requested, skipping compression")
-		return nil
-	}
 
 	rawMessages, ok := request.Body["messages"]
 	if !ok {
