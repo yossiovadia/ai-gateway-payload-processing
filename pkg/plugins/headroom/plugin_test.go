@@ -246,6 +246,51 @@ func TestProcessRequest_SendsFullMessages(t *testing.T) {
 	assert.Len(t, capturedMessages, 4, "all messages should be sent to headroom")
 }
 
+func TestProcessRequest_ForwardsUsername(t *testing.T) {
+	var capturedUsername string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUsername = r.Header.Get("x-maas-username")
+		var req compressRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		resp := compressResult{Messages: req.Messages, TokensSaved: 0}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
+	require.NoError(t, err)
+
+	req := framework.NewInferenceRequest()
+	req.Headers["x-maas-username"] = "yossi"
+	req.Body["model"] = "test"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
+
+	_ = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
+	assert.Equal(t, "yossi", capturedUsername)
+}
+
+func TestProcessRequest_NoUsernameHeader(t *testing.T) {
+	var capturedUsername string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUsername = r.Header.Get("x-maas-username")
+		var req compressRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		resp := compressResult{Messages: req.Messages, TokensSaved: 0}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	p, err := NewHeadroomPlugin(srv.URL, 10, true)
+	require.NoError(t, err)
+
+	req := framework.NewInferenceRequest()
+	req.Body["model"] = "test"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "hi"}}
+
+	_ = p.ProcessRequest(context.Background(), framework.NewCycleState(), req)
+	assert.Empty(t, capturedUsername, "no username header should mean empty")
+}
+
 // --- ProcessResponse ---
 
 func TestProcessResponse_AddsHeaders(t *testing.T) {

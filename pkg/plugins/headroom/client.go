@@ -68,7 +68,7 @@ func newHeadroomClient(headroomURL string, timeoutSeconds int) (*headroomClient,
 	}, nil
 }
 
-func (c *headroomClient) compress(ctx context.Context, messages []any, model string) (*compressResult, error) {
+func (c *headroomClient) compress(ctx context.Context, messages []any, model string, username string) (*compressResult, error) {
 	reqBody := compressRequest{
 		Messages: messages,
 		Model:    model,
@@ -84,6 +84,9 @@ func (c *headroomClient) compress(ctx context.Context, messages []any, model str
 		return nil, fmt.Errorf("create compress request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if username != "" {
+		httpReq.Header.Set("x-maas-username", username)
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

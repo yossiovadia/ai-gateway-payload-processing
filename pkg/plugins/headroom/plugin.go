@@ -118,8 +118,9 @@ func (p *HeadroomPlugin) ProcessRequest(ctx context.Context, cycleState *framewo
 	}
 
 	model := p.resolveModel(cycleState, request)
+	username := request.Headers["x-maas-username"]
 
-	result, err := p.client.compress(ctx, messages, model)
+	result, err := p.client.compress(ctx, messages, model, username)
 	if err != nil {
 		if p.failOpen {
 			logger.Error(err, "headroom compression failed, passing through uncompressed (fail-open)")
