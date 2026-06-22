@@ -112,7 +112,14 @@ func (p *HeadroomPlugin) ProcessRequest(ctx context.Context, cycleState *framewo
 	}
 
 	model := p.resolveModel(cycleState, request)
-	username := request.Headers["x-maas-username"]
+	username := ""
+	if u, err := framework.ReadCycleStateKey[string](cycleState, state.MeteringUsernameKey); err == nil && u != "" {
+		username = u
+	} else if u := request.Headers["x-maas-username"]; u != "" {
+		username = u
+	} else if u := request.Headers["x-maas-user"]; u != "" {
+		username = u
+	}
 
 	result, err := p.client.compress(ctx, messages, model, username)
 	if err != nil {
